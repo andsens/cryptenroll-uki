@@ -43,7 +43,9 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
   "$PKGROOT/.upkg/.bin/checkdeps" /lib/systemd/systemd-pcrlock systemd-cryptenroll jq
 
   if [[ ${#__device[@]} -eq 0 ]]; then
+    "$PKGROOT/.upkg/.bin/checkdeps" lsblk
     readarray -t __device < <(lsblk --output FSTYPE,NAME --list --json | jq -r '.blockdevices[] | select(.fstype=="crypto_LUKS") | "/dev/\(.name)"')
+    [[ ${#__device[@]} -gt 0 ]] || fatal "No LUKS volumes found with lsblk. You can manually specify devices with --device"
   fi
 
   local uki_records
