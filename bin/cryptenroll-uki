@@ -93,7 +93,7 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
   # Copy the keyfile contents (in case KEYFILE is an fd)
   cat "$KEYFILE" >"$tmp_keyfile"
   for dev in "${__device[@]}"; do
-    echo systemd-cryptenroll --unlock-key-file "$tmp_keyfile" \
+    systemd-cryptenroll --unlock-key-file "$tmp_keyfile" \
       --tpm2-device=auto $wipe_opt \
       --tpm2-pcrs="0+2+4:$__hashalg=$pcr4+11:$__hashalg=$pcr11" \
       "$dev"
