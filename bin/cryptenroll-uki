@@ -14,27 +14,29 @@ Options:
   -e --exclusive    Remove all other TPM2 keys
   -r --record PATH  Additional .pcrlock record files to append
   -d --device PATH  Enroll specific disks (defaults to all LUKS volumes)
+  -n --dry-run      Don't actually enroll keys, only show the command
 "
 # docopt parser below, refresh this parser with `docopt.sh cryptenroll-uki`
 # shellcheck disable=2016,2086,2317,1090,1091,2034,2154
 docopt() { local v='2.0.2'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:396};usage=${DOC:71:72}
-digest=aae99;options=('-a --hashalg 1' '-e --exclusive 0' '-r --record 1' '-d '\
-'--device 1');node_0(){ value __hashalg 0;};node_1(){ switch __exclusive 1;}
-node_2(){ value __record 2 true;};node_3(){ value __device 3 true;};node_4(){
-value UKIPATH a;};node_5(){ value KEYFILE a;};node_6(){ optional 0 1 7 8;}
-node_7(){ repeatable 2;};node_8(){ repeatable 3;};node_9(){ sequence 6 4 5;}
-cat <<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
-"${DOC:71:72}" >&2;exit 1;}';local varnames=(__hashalg __exclusive __record \
-__device UKIPATH KEYFILE) varname;for varname in "${varnames[@]}"; do unset \
-"var_$varname";done;parse 9 "$@";local p=${DOCOPT_PREFIX:-''};for varname in \
-"${varnames[@]}"; do unset "$p$varname";done;if declare -p var___record \
->/dev/null 2>&1; then eval $p'__record=("${var___record[@]}")';else eval $p'__'\
-'record=()';fi;if declare -p var___device >/dev/null 2>&1; then eval $p'__devi'\
-'ce=("${var___device[@]}")';else eval $p'__device=()';fi;eval $p'__hashalg=${v'\
-'ar___hashalg:-sha256};'$p'__exclusive=${var___exclusive:-false};'$p'UKIPATH=$'\
-'{var_UKIPATH:-};'$p'KEYFILE=${var_KEYFILE:-};';local docopt_i=1;[[ \
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:466};usage=${DOC:71:72}
+digest=53f54;options=('-a --hashalg 1' '-e --exclusive 0' '-n --dry-run 0' '-r'\
+' --record 1' '-d --device 1');node_0(){ value __hashalg 0;};node_1(){ switch \
+__exclusive 1;};node_2(){ switch __dry_run 2;};node_3(){ value __record 3 true;}
+node_4(){ value __device 4 true;};node_5(){ value UKIPATH a;};node_6(){ value \
+KEYFILE a;};node_7(){ optional 0 1 2 8 9;};node_8(){ repeatable 3;};node_9(){
+repeatable 4;};node_10(){ sequence 7 5 6;};cat <<<' docopt_exit() { [[ -n $1 \
+]] && printf "%s\n" "$1" >&2;printf "%s\n" "${DOC:71:72}" >&2;exit 1;}';local \
+varnames=(__hashalg __exclusive __dry_run __record __device UKIPATH KEYFILE) \
+varname;for varname in "${varnames[@]}"; do unset "var_$varname";done;parse 10 \
+"$@";local p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset \
+"$p$varname";done;if declare -p var___record >/dev/null 2>&1; then eval $p'__r'\
+'ecord=("${var___record[@]}")';else eval $p'__record=()';fi;if declare -p \
+var___device >/dev/null 2>&1; then eval $p'__device=("${var___device[@]}")';else
+eval $p'__device=()';fi;eval $p'__hashalg=${var___hashalg:-sha256};'$p'__exclu'\
+'sive=${var___exclusive:-false};'$p'__dry_run=${var___dry_run:-false};'$p'UKIP'\
+'ATH=${var_UKIPATH:-};'$p'KEYFILE=${var_KEYFILE:-};';local docopt_i=1;[[ \
 $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for \
 varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' cryptenroll-uki`
@@ -92,8 +94,12 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
   trap "rm -f \"$tmp_keyfile\"" EXIT
   # Copy the keyfile contents (in case KEYFILE is an fd)
   cat "$KEYFILE" >"$tmp_keyfile"
+
+  local cmd="echo systemd-cryptenroll"
+  # shellcheck disable=SC2154
+  $__dry_run || cmd=systemd-cryptenroll
   for dev in "${__device[@]}"; do
-    systemd-cryptenroll --unlock-key-file "$tmp_keyfile" \
+    $cmd --unlock-key-file "$tmp_keyfile" \
       --tpm2-device=auto $wipe_opt \
       --tpm2-pcrs="0+2+4:$__hashalg=$pcr4+11:$__hashalg=$pcr11" \
       "$dev"
