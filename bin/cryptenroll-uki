@@ -7,7 +7,7 @@ source "$PKGROOT/.upkg/records.sh/records.sh"
 main() {
   DOC="cryptenroll-uki - Enroll a LUKS TPM2 key that can be unlocked by a UKI
 Usage:
-  cryptenroll-uki [options -r PATH... -d PATH...] UKIPATH KEYFILE
+  cryptenroll-uki [options -r PATH... -d PATH...] KEYFILE UKIPATH...
 
 Options:
   -a --hashalg ALG  Which PCR bank to use [default: sha256]
@@ -20,25 +20,27 @@ Options:
 # shellcheck disable=2016,2086,2317,1090,1091,2034,2154
 docopt() { local v='2.0.2'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:466};usage=${DOC:71:72}
-digest=53f54;options=('-a --hashalg 1' '-e --exclusive 0' '-n --dry-run 0' '-r'\
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:469};usage=${DOC:71:75}
+digest=030be;options=('-a --hashalg 1' '-e --exclusive 0' '-n --dry-run 0' '-r'\
 ' --record 1' '-d --device 1');node_0(){ value __hashalg 0;};node_1(){ switch \
 __exclusive 1;};node_2(){ switch __dry_run 2;};node_3(){ value __record 3 true;}
-node_4(){ value __device 4 true;};node_5(){ value UKIPATH a;};node_6(){ value \
-KEYFILE a;};node_7(){ optional 0 1 2 8 9;};node_8(){ repeatable 3;};node_9(){
-repeatable 4;};node_10(){ sequence 7 5 6;};cat <<<' docopt_exit() { [[ -n $1 \
-]] && printf "%s\n" "$1" >&2;printf "%s\n" "${DOC:71:72}" >&2;exit 1;}';local \
-varnames=(__hashalg __exclusive __dry_run __record __device UKIPATH KEYFILE) \
-varname;for varname in "${varnames[@]}"; do unset "var_$varname";done;parse 10 \
-"$@";local p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset \
-"$p$varname";done;if declare -p var___record >/dev/null 2>&1; then eval $p'__r'\
-'ecord=("${var___record[@]}")';else eval $p'__record=()';fi;if declare -p \
-var___device >/dev/null 2>&1; then eval $p'__device=("${var___device[@]}")';else
-eval $p'__device=()';fi;eval $p'__hashalg=${var___hashalg:-sha256};'$p'__exclu'\
-'sive=${var___exclusive:-false};'$p'__dry_run=${var___dry_run:-false};'$p'UKIP'\
-'ATH=${var_UKIPATH:-};'$p'KEYFILE=${var_KEYFILE:-};';local docopt_i=1;[[ \
-$BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for \
-varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
+node_4(){ value __device 4 true;};node_5(){ value KEYFILE a;};node_6(){ value \
+UKIPATH a true;};node_7(){ optional 0 1 2 8 9;};node_8(){ repeatable 3;}
+node_9(){ repeatable 4;};node_10(){ repeatable 6;};node_11(){ sequence 7 5 10;}
+cat <<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
+"${DOC:71:75}" >&2;exit 1;}';local varnames=(__hashalg __exclusive __dry_run \
+__record __device KEYFILE UKIPATH) varname;for varname in "${varnames[@]}"; do
+unset "var_$varname";done;parse 11 "$@";local p=${DOCOPT_PREFIX:-''};for \
+varname in "${varnames[@]}"; do unset "$p$varname";done;if declare -p \
+var___record >/dev/null 2>&1; then eval $p'__record=("${var___record[@]}")';else
+eval $p'__record=()';fi;if declare -p var___device >/dev/null 2>&1; then eval \
+$p'__device=("${var___device[@]}")';else eval $p'__device=()';fi;if declare -p \
+var_UKIPATH >/dev/null 2>&1; then eval $p'UKIPATH=("${var_UKIPATH[@]}")';else
+eval $p'UKIPATH=()';fi;eval $p'__hashalg=${var___hashalg:-sha256};'$p'__exclus'\
+'ive=${var___exclusive:-false};'$p'__dry_run=${var___dry_run:-false};'$p'KEYFI'\
+'LE=${var_KEYFILE:-};';local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && \
+docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for varname in "${varnames[@]}"; \
+do declare -p "$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' cryptenroll-uki`
   eval "$(docopt "$@")"
 
@@ -50,59 +52,63 @@ varname in "${varnames[@]}"; do declare -p "$p$varname";done;done;}
     [[ ${#__device[@]} -gt 0 ]] || fatal "No LUKS volumes found with lsblk. You can manually specify devices with --device"
   fi
 
-  local uki_records
-  uki_records=$(/lib/systemd/systemd-pcrlock lock-uki "$UKIPATH")
-
-  # See https://github.com/systemd/systemd/issues/36076
-  local kernel_tmp raw_size
-  kernel_tmp=$(mktemp -d)
-  # shellcheck disable=SC2064
-  trap "rm -rf '$kernel_tmp'" EXIT
-  objcopy -O binary --only-section=.linux "$UKIPATH" "$kernel_tmp/linux"
-  raw_size=$(stat -c%s "$kernel_tmp/linux") # not the original size of vmlinuz, it's already padded a bit, but we need to pad *mooore*
-  local paddr virtual_size _idx _name _rest
-  read -r _idx _name paddr _rest < <(objdump -P sections "$UKIPATH" | grep -F .linux) || \
-    fatal "Unable to find .linux section in UKI"
-  virtual_size=$(printf "%d" "0x$paddr")
-  dd if=/dev/zero bs=1 status=none count=$((virtual_size-raw_size)) conv=notrunc oflag=append of="$kernel_tmp/linux"
-  local kernel_records
-  kernel_records=$(/lib/systemd/systemd-pcrlock lock-pe "$kernel_tmp/linux")
-
-  local records='[]'
-  records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/350-action-efi-application.pcrlock)
-  records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/500-separator.pcrlock.d/300-0x00000000.pcrlock)
-  records=$(jq --argjson records "$records" '$records + .records' <<<"$uki_records")
-  records=$(jq --argjson records "$records" '$records + .records' <<<"$kernel_records")
-  records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/750-enter-initrd.pcrlock)
-  local record_path
-  # shellcheck disable=SC2154
-  for record_path in "${__record[@]}"; do
-    records=$(jq -re --argjson records "$records" '$records + .records' "$record_path")
-  done
-
-  local pcr4 pcr11
-  # shellcheck disable=SC2154
-  pcr4=$(calc_pcr "$records" 4 "$__hashalg")
-  pcr11=$(calc_pcr "$records" 11 "$__hashalg")
   local wipe_opt='--wipe-slot=tpm2'
   # shellcheck disable=SC2154
   $__exclusive || wipe_opt=
+  local uki_path
+  for uki_path in "${UKIPATH[@]}"; do
+    local uki_records
+    uki_records=$(/lib/systemd/systemd-pcrlock lock-uki "$uki_path")
 
-  local tmp_keyfile
-  tmp_keyfile=$(mktemp)
-  # shellcheck disable=SC2064
-  trap "rm -f \"$tmp_keyfile\"" EXIT
-  # Copy the keyfile contents (in case KEYFILE is an fd)
-  cat "$KEYFILE" >"$tmp_keyfile"
+    # See https://github.com/systemd/systemd/issues/36076
+    local kernel_tmp raw_size
+    kernel_tmp=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$kernel_tmp'" EXIT
+    objcopy -O binary --only-section=.linux "$uki_path" "$kernel_tmp/linux"
+    raw_size=$(stat -c%s "$kernel_tmp/linux") # not the original size of vmlinuz, it's already padded a bit, but we need to pad *mooore*
+    local paddr virtual_size _idx _name _rest
+    read -r _idx _name paddr _rest < <(objdump -P sections "$uki_path" | grep -F .linux) || \
+      fatal "Unable to find .linux section in UKI"
+    virtual_size=$(printf "%d" "0x$paddr")
+    dd if=/dev/zero bs=1 status=none count=$((virtual_size-raw_size)) conv=notrunc oflag=append of="$kernel_tmp/linux"
+    local kernel_records
+    kernel_records=$(/lib/systemd/systemd-pcrlock lock-pe "$kernel_tmp/linux")
 
-  local cmd="echo systemd-cryptenroll"
-  # shellcheck disable=SC2154
-  $__dry_run || cmd=systemd-cryptenroll
-  for dev in "${__device[@]}"; do
-    $cmd --unlock-key-file "$tmp_keyfile" \
-      --tpm2-device=auto $wipe_opt \
-      --tpm2-pcrs="0+2+4:$__hashalg=$pcr4+11:$__hashalg=$pcr11" \
-      "$dev"
+    local records='[]'
+    records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/350-action-efi-application.pcrlock)
+    records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/500-separator.pcrlock.d/300-0x00000000.pcrlock)
+    records=$(jq --argjson records "$records" '$records + .records' <<<"$uki_records")
+    records=$(jq --argjson records "$records" '$records + .records' <<<"$kernel_records")
+    records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/750-enter-initrd.pcrlock)
+    local record_path
+    # shellcheck disable=SC2154
+    for record_path in "${__record[@]}"; do
+      records=$(jq -re --argjson records "$records" '$records + .records' "$record_path")
+    done
+
+    local pcr4 pcr11
+    # shellcheck disable=SC2154
+    pcr4=$(calc_pcr "$records" 4 "$__hashalg")
+    pcr11=$(calc_pcr "$records" 11 "$__hashalg")
+
+    local tmp_keyfile
+    tmp_keyfile=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f \"$tmp_keyfile\"" EXIT
+    # Copy the keyfile contents (in case KEYFILE is an fd)
+    cat "$KEYFILE" >"$tmp_keyfile"
+
+    local cmd="echo systemd-cryptenroll"
+    # shellcheck disable=SC2154
+    $__dry_run || cmd=systemd-cryptenroll
+    for dev in "${__device[@]}"; do
+      $cmd --unlock-key-file "$tmp_keyfile" \
+        --tpm2-device=auto $wipe_opt \
+        --tpm2-pcrs="0+2+4:$__hashalg=$pcr4+11:$__hashalg=$pcr11" \
+        "$dev"
+    done
+    wipe_opt=
   done
 }
 
