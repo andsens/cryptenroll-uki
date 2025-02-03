@@ -44,7 +44,7 @@ do declare -p "$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' cryptenroll-uki`
   eval "$(docopt "$@")"
 
-  "$PKGROOT/.upkg/.bin/checkdeps" /lib/systemd/systemd-pcrlock systemd-cryptenroll jq
+  "$PKGROOT/.upkg/.bin/checkdeps" /lib/systemd/systemd-pcrlock systemd-cryptenroll jq objcopy xxd dd
 
   if [[ ${#__device[@]} -eq 0 ]]; then
     "$PKGROOT/.upkg/.bin/checkdeps" lsblk
@@ -75,8 +75,21 @@ do declare -p "$p$varname";done;done;}
     local kernel_records
     kernel_records=$(/lib/systemd/systemd-pcrlock lock-pe "$kernel_tmp/linux")
 
-    local records='[]'
-    records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/350-action-efi-application.pcrlock)
+    local cel records='[]'
+    cel=$(/lib/systemd/systemd-pcrlock cel)
+    extend_if_present() {
+      local pcrlock=$1 index=$2 digest
+      # shellcheck disable=SC2154
+      jq -re --argjson index "$index" --arg hashAlg "$__hashalg" '[.records[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg)] | length == 1' "$pcrlock" >/dev/null || \
+        fatal "Failed to find exactly one digest for PCR%s and hash algorithm %s in pcrlock %s" "$index" "$__hashalg" "$pcrlock"
+      digest=$(jq -r --argjson index "$index" --arg hashAlg "$__hashalg" '.records[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg) | .digest' "$pcrlock")
+      if jq -re --argjson index "$index" --arg hashAlg "$__hashalg" --arg digest "$digest" \
+        '[.[] | select(.pcr==$index) | .digests[] | contains({"hashAlg": $hashAlg, "digest": $digest})] | any' <<<"$cel" >/dev/null; then
+        records=$(jq --argjson records "$records" '$records + .records' "$pcrlock")
+      fi
+    }
+
+    extend_if_present /usr/lib/pcrlock.d/350-action-efi-application.pcrlock 4
     records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/500-separator.pcrlock.d/300-0x00000000.pcrlock)
     records=$(jq --argjson records "$records" '$records + .records' <<<"$uki_records")
     records=$(jq --argjson records "$records" '$records + .records' <<<"$kernel_records")
@@ -88,7 +101,6 @@ do declare -p "$p$varname";done;done;}
     done
 
     local pcr4 pcr11
-    # shellcheck disable=SC2154
     pcr4=$(calc_pcr "$records" 4 "$__hashalg")
     pcr11=$(calc_pcr "$records" 11 "$__hashalg")
 
@@ -121,8 +133,10 @@ calc_pcr() {
     sha384) pcr=$(printf '0%.0s' {1..96}) ;;
     sha512) pcr=$(printf '0%.0s' {1..128}) ;;
   esac
-  for digest in $(jq -r --argjson pcr "$index" --arg hashAlg "$hash_alg" \
-    '.[] | select(.pcr==$pcr) | .digests[] | select(.hashAlg==$hashAlg) | .digest' <<<"$records"); do
+  verbose "Calculating %s chain for PCR%s" "$hash_alg" "$index"
+  for digest in $(jq -r --argjson index "$index" --arg hashAlg "$hash_alg" \
+    '.[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg) | .digest' <<<"$records"); do
+    verbose "%s: %s" "$index" "$digest"
     pcr=$( (xxd -r -p <<<"${pcr}${digest}") | "${hash_alg}sum" | cut -d' ' -f1)
   done
   printf "%s\n" "$pcr"
