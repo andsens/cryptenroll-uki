@@ -52,11 +52,19 @@ do declare -p "$p$varname";done;done;}
     [[ ${#__device[@]} -gt 0 ]] || fatal "No LUKS volumes found with lsblk. You can manually specify devices with --device"
   fi
 
-  local cel efi_app_count
+  local cel secureboot=false
   cel=$(/lib/systemd/systemd-pcrlock cel)
-  efi_app_count=$(jq '[.[] | select(.pcr==4 and .content.event_type=="EV_EFI_BOOT_SERVICES_APPLICATION")] | length' <<<"$cel")
-  [[ $efi_app_count -eq 1 || $efi_app_count -eq 2 ]] || \
-    fatal "Found %s EFI Boot Services Application entries in the TPM event log, expected 1 or 2"
+  if type sbctl &>/dev/null; then
+    if sbctl status --json | jq -e '.secure_boot' >/dev/null; then
+      secureboot=true
+    fi
+  elif type mokutil &>/dev/null; then
+    if [[ $(mokutil --sb-state) = 'SecureBoot enabled' ]]; then
+      secureboot=true
+    fi
+  else
+    warning "Unable to find neither sbctl nor mokutil to determine secureboot state, assuming no secureboot"
+  fi
 
   extend_if_present() {
     local pcrlock=$1 index=$2 digest
@@ -79,8 +87,7 @@ do declare -p "$p$varname";done;done;}
     extend_if_present /usr/lib/pcrlock.d/350-action-efi-application.pcrlock 4
     records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/500-separator.pcrlock.d/300-0x00000000.pcrlock)
     records=$(jq --argjson records "$records" '$records + .records' <(/lib/systemd/systemd-pcrlock lock-uki "$uki_path"))
-    [[ $efi_app_count -eq 1 ]] || \
-      records=$(jq --argjson records "$records" '$records + .records' <(lock_vmlinuz "$uki_path"))
+    $secureboot || records=$(jq --argjson records "$records" '$records + .records' <(lock_vmlinuz "$uki_path"))
     records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/750-enter-initrd.pcrlock)
     local record_path
     # shellcheck disable=SC2154
