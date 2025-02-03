@@ -52,47 +52,35 @@ do declare -p "$p$varname";done;done;}
     [[ ${#__device[@]} -gt 0 ]] || fatal "No LUKS volumes found with lsblk. You can manually specify devices with --device"
   fi
 
+  local cel efi_app_count
+  cel=$(/lib/systemd/systemd-pcrlock cel)
+  efi_app_count=$(jq '[.[] | select(.pcr==4 and .content.event_type=="EV_EFI_BOOT_SERVICES_APPLICATION")] | length' <<<"$cel")
+  [[ $efi_app_count -eq 1 || $efi_app_count -eq 2 ]] || \
+    fatal "Found %s EFI Boot Services Application entries in the TPM event log, expected 1 or 2"
+
+  extend_if_present() {
+    local pcrlock=$1 index=$2 digest
+    # shellcheck disable=SC2154
+    jq -re --argjson index "$index" --arg hashAlg "$__hashalg" '[.records[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg)] | length == 1' "$pcrlock" >/dev/null || \
+      fatal "Failed to find exactly one digest for PCR%s and hash algorithm %s in pcrlock %s" "$index" "$__hashalg" "$pcrlock"
+    digest=$(jq -r --argjson index "$index" --arg hashAlg "$__hashalg" '.records[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg) | .digest' "$pcrlock")
+    if jq -re --argjson index "$index" --arg hashAlg "$__hashalg" --arg digest "$digest" \
+      '[.[] | select(.pcr==$index) | .digests[] | contains({"hashAlg": $hashAlg, "digest": $digest})] | any' <<<"$cel" >/dev/null; then
+      records=$(jq --argjson records "$records" '$records + .records' "$pcrlock")
+    fi
+  }
+
   local wipe_opt='--wipe-slot=tpm2'
   # shellcheck disable=SC2154
   $__exclusive || wipe_opt=
   local uki_path
   for uki_path in "${UKIPATH[@]}"; do
-    local uki_records
-    uki_records=$(/lib/systemd/systemd-pcrlock lock-uki "$uki_path")
-
-    # See https://github.com/systemd/systemd/issues/36076
-    local kernel_tmp raw_size
-    kernel_tmp=$(mktemp -d)
-    # shellcheck disable=SC2064
-    trap "rm -rf '$kernel_tmp'" EXIT
-    objcopy -O binary --only-section=.linux "$uki_path" "$kernel_tmp/linux"
-    raw_size=$(stat -c%s "$kernel_tmp/linux") # not the original size of vmlinuz, it's already padded a bit, but we need to pad *mooore*
-    local paddr virtual_size _idx _name _rest
-    read -r _idx _name paddr _rest < <(objdump -P sections "$uki_path" | grep -F .linux) || \
-      fatal "Unable to find .linux section in UKI"
-    virtual_size=$(printf "%d" "0x$paddr")
-    dd if=/dev/zero bs=1 status=none count=$((virtual_size-raw_size)) conv=notrunc oflag=append of="$kernel_tmp/linux"
-    local kernel_records
-    kernel_records=$(/lib/systemd/systemd-pcrlock lock-pe "$kernel_tmp/linux")
-
-    local cel records='[]'
-    cel=$(/lib/systemd/systemd-pcrlock cel)
-    extend_if_present() {
-      local pcrlock=$1 index=$2 digest
-      # shellcheck disable=SC2154
-      jq -re --argjson index "$index" --arg hashAlg "$__hashalg" '[.records[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg)] | length == 1' "$pcrlock" >/dev/null || \
-        fatal "Failed to find exactly one digest for PCR%s and hash algorithm %s in pcrlock %s" "$index" "$__hashalg" "$pcrlock"
-      digest=$(jq -r --argjson index "$index" --arg hashAlg "$__hashalg" '.records[] | select(.pcr==$index) | .digests[] | select(.hashAlg==$hashAlg) | .digest' "$pcrlock")
-      if jq -re --argjson index "$index" --arg hashAlg "$__hashalg" --arg digest "$digest" \
-        '[.[] | select(.pcr==$index) | .digests[] | contains({"hashAlg": $hashAlg, "digest": $digest})] | any' <<<"$cel" >/dev/null; then
-        records=$(jq --argjson records "$records" '$records + .records' "$pcrlock")
-      fi
-    }
-
+    local records='[]'
     extend_if_present /usr/lib/pcrlock.d/350-action-efi-application.pcrlock 4
     records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/500-separator.pcrlock.d/300-0x00000000.pcrlock)
-    records=$(jq --argjson records "$records" '$records + .records' <<<"$uki_records")
-    records=$(jq --argjson records "$records" '$records + .records' <<<"$kernel_records")
+    records=$(jq --argjson records "$records" '$records + .records' <(/lib/systemd/systemd-pcrlock lock-uki "$uki_path"))
+    [[ $efi_app_count -eq 1 ]] || \
+      records=$(jq --argjson records "$records" '$records + .records' <(lock_vmlinuz "$uki_path"))
     records=$(jq --argjson records "$records" '$records + .records' /usr/lib/pcrlock.d/750-enter-initrd.pcrlock)
     local record_path
     # shellcheck disable=SC2154
@@ -122,6 +110,25 @@ do declare -p "$p$varname";done;done;}
     done
     wipe_opt=
   done
+}
+
+lock_vmlinuz() {
+  local uki_path=$1
+  # See https://github.com/systemd/systemd/issues/36076
+  local kernel_tmp raw_size
+  kernel_tmp=$(mktemp -d)
+  # shellcheck disable=SC2064
+  trap "rm -rf '$kernel_tmp'" EXIT
+  objcopy -O binary --only-section=.linux "$uki_path" "$kernel_tmp/linux"
+  raw_size=$(stat -c%s "$kernel_tmp/linux") # not the original size of vmlinuz, it's already padded a bit, but we need to pad *mooore*
+  local paddr virtual_size _idx _name _rest
+  read -r _idx _name paddr _rest < <(objdump -P sections "$uki_path" | grep -F .linux) || \
+    fatal "Unable to find .linux section in UKI"
+  virtual_size=$(printf "%d" "0x$paddr")
+  dd if=/dev/zero bs=1 status=none count=$((virtual_size-raw_size)) conv=notrunc oflag=append of="$kernel_tmp/linux"
+  /lib/systemd/systemd-pcrlock lock-pe "$kernel_tmp/linux"
+  rm -rf "$kernel_tmp"
+  trap '' EXIT
 }
 
 calc_pcr() {
