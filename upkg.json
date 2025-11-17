@@ -11,8 +11,8 @@
       "sha256": "0b7ebb5e60163ccbd4966527f72c0e30f8cb183de6057ddad72b4e6b83ae1637"
     },
     {
-      "tar": "https://github.com/orbit-online/records.sh/releases/download/v1.0.2/records.sh.tar.gz",
-      "sha256": "201977ecc5fc9069d8eff12ba6adc9ce1286ba66c9aeee19184e26185cc6ef63"
+      "tar": "https://github.com/orbit-online/records.sh/releases/download/v1.0.3/records.sh.tar.gz",
+      "sha256": "fb8671d4870f9133fc5743f2f68f695c7efe11b433b8853daaa2eead9e78b20a"
     }
   ]
 }
